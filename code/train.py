@@ -2,7 +2,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"]='0'
 from fewshot_re_kit.data_loader import get_loader
 from fewshot_re_kit.framework import FewShotREFramework
-from fewshot_re_kit.sentence_encoder import BERTSentenceEncoder, BERTSentenceEncoder_EntDesc, BERTSentenceEncoder_cnpt_id
+from fewshot_re_kit.sentence_encoder import BERTSentenceEncoder
 import fewshot_re_kit
 import models
 from models.proto import Proto
