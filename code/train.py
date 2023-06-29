@@ -1,21 +1,18 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]='0'
-from fewshot_re_kit.data_loader import get_loader
-from fewshot_re_kit.framework import FewShotREFramework
-from fewshot_re_kit.sentence_encoder import BERTSentenceEncoder
-import fewshot_re_kit
-import models
-from models.proto import Proto
-from models.my_proto import MyProto
-from models.proto_meta import ProtoMeta
-from models.d import Discriminator
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+from data_loader import get_loader, get_loader_pair, get_loader_unsupervised
+from framework import FewShotREFramework
+from sentence_encoder import BERTSentenceEncoder
+from proto import Proto
+
 import sys
 import torch
 from torch import optim, nn
 import numpy as np
 import json
 import argparse
-import os
+import random
+from utils import set_seed
 
 def main():
     parser = argparse.ArgumentParser()
