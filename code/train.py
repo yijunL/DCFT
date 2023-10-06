@@ -2,7 +2,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 from data_loader import get_loader, get_loader_pair, get_loader_unsupervised
 from framework import FewShotREFramework
-from sentence_encoder import BERTSentenceEncoder
+from sentence_encoder import BERTSentenceEncoder, BERTPAIRSentenceEncoder, RobertaSentenceEncoder, RobertaPAIRSentenceEncoder
 from proto import Proto
 
 import sys
@@ -18,43 +18,49 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', default='train_wiki',
             help='train file')
-    parser.add_argument('--val', default='val_wiki',
+    parser.add_argument('--val', default='val_pubmed',
             help='val file')
-    parser.add_argument('--test', default='test_wiki',
+    parser.add_argument('--test', default='val_pubmed',
             help='test file')
-    parser.add_argument('--adv', default=None,
+    parser.add_argument('--adv', default='pubmed_unsupervised', #pubmed_unsupervised
             help='adv file')
-    parser.add_argument('--trainN', default=10, type=int,
+    parser.add_argument('--trainN', default=5, type=int,
             help='N in train')
     parser.add_argument('--N', default=5, type=int,
             help='N way')
-    parser.add_argument('--K', default=5, type=int,
+    parser.add_argument('--K', default=1, type=int,
             help='K shot')
-    parser.add_argument('--Q', default=5, type=int,
+    parser.add_argument('--Q', default=1, type=int,
             help='Num of query per class')
-    parser.add_argument('--batch_size', default=4, type=int,
+    parser.add_argument('--batch_size', default=1, type=int,
             help='batch size')
-    parser.add_argument('--train_iter', default=30000, type=int,
+    parser.add_argument('--train_iter', default=5000, type=int,
             help='num of iters in training')
     parser.add_argument('--val_iter', default=1000, type=int,
             help='num of iters in validation')
-    parser.add_argument('--test_iter', default=5000, type=int,
+    parser.add_argument('--test_iter', default=10000, type=int,
             help='num of iters in testing')
-    parser.add_argument('--val_step', default=2000, type=int,
+    parser.add_argument('--val_step', default=50, type=int,
            help='val after training how many iters')
-    parser.add_argument('--model', default='proto_meta',
+    parser.add_argument('--model', default='proto',
             help='model name')
+    parser.add_argument('--encoder', default='bert',
+            help='encoder: cnn or bert or roberta')
     parser.add_argument('--max_length', default=128, type=int,
            help='max length')
-    parser.add_argument('--lr', default=1e-1, type=float,
+    parser.add_argument('--lr', default=2e-5, type=float,
            help='learning rate')
     parser.add_argument('--weight_decay', default=1e-5, type=float,
            help='weight decay')
     parser.add_argument('--dropout', default=0.0, type=float,
            help='dropout rate')
+    parser.add_argument('--na_rate', default=0, type=int,
+           help='NA rate (NA = Q * na_rate)')
+    parser.add_argument('--grad_iter', default=1, type=int,
+           help='accumulate gradient every x iterations')
     parser.add_argument('--optim', default='sgd',
            help='sgd / adam / adamw')
-    parser.add_argument('--hidden_size', default=230, type=int,
+    parser.add_argument('--hidden_size', default=768*4, type=int,
            help='hidden size')
     parser.add_argument('--load_ckpt', default=None,
            help='load ckpt')
@@ -64,137 +70,106 @@ def main():
            help='use nvidia apex fp16')
     parser.add_argument('--only_test', action='store_true',
            help='only test')
+    parser.add_argument('--ckpt_name', type=str, default='51R-8',  ###55C0d2
+           help='checkpoint name.')
+    parser.add_argument('--random_seed', default=8, type=int,
+           help='random_seed')
 
-    # for bert
-    parser.add_argument('--pretrain_ckpt', default='bert-base-uncased',
-           help='bert pre-trained checkpoint')
-    parser.add_argument('--word_embedding_dim', default=50, type=int,
-           help='word_embedding_dim')
+
+
+    # only for bert / roberta
+    parser.add_argument('--pair', action='store_true',default=False,
+           help='use pair model')
+    parser.add_argument('--pretrain_ckpt', default="../pretrain/bert-base-uncased",
+           help='bert / roberta pre-trained checkpoint')
+    parser.add_argument('--cat_entity_rep', action='store_true',default=True,
+           help='concatenate entity representation as sentence rep')
+
+    # only for prototypical networks
+    parser.add_argument('--dot', action='store_true', 
+           help='use dot instead of L2 distance for proto')
+
+    # only for mtb
+    parser.add_argument('--no_dropout', action='store_true',
+           help='do not use dropout after BERT (still has dropout in BERT).')
     
-
-    parser.add_argument('--gpu', default=None, type=int,
-           help='gpu to be used')
-
-
-    # for knoeledge graph
-    parser.add_argument('--kg_dict', default=None,
-           help='the dictionary of knowledge graph')
-    parser.add_argument('--add_cnpt_node', action='store_true',
-           help='add concept embedding as feature')
-    parser.add_argument('--kg_encoder', default="distmult",
-           help='the knowledge graph encoder')
-    parser.add_argument('--feature_dim', default=0, type=int,
-           help='dim of additional features')
-    parser.add_argument('--return_cnpt_id', action='store_true',
-           help='return concept id list in sentence encoder')
-
-    # hyper-parameter
-    parser.add_argument('--lambda_para', default=0.5, type=float,
-           help='trade off cross entropy loss and triplet loss')
-    parser.add_argument('--alpha', default=0.7, type=float,
-           help='combine ratio in inference')
-    parser.add_argument('--beta', default=1, type=float,
-           help='meta learning rate')
-    parser.add_argument('--cnpt_att', action='store_true',
-           help='use attention in cnpt aggregation')
+    # experiment
+    parser.add_argument('--mask_entity', action='store_true',
+           help='mask entity names')
+    parser.add_argument('--use_sgd_for_bert', action='store_true',
+           help='use SGD instead of AdamW for BERT.')
 
     opt = parser.parse_args()
+    set_seed(opt.random_seed)
     trainN = opt.trainN
     N = opt.N
     K = opt.K
     Q = opt.Q
     batch_size = opt.batch_size
     model_name = opt.model
+    encoder_name = opt.encoder
     max_length = opt.max_length
-    kg_enrich = None
-    kg_encoder = opt.kg_encoder
-    cal_meta_rel = False
-    return_cnpt_id = opt.return_cnpt_id
-    cnpt_att = opt.cnpt_att
-    keep_grad = False
-    encoder_name = "bert"
-    bert_optim = True
-
-    if kg_encoder == "distmult" or "transe":
-        kg_emb_dim = 256
-    elif kg_encoder == "analogy" or "rotate":
-        kg_emb_dim = 512
-    else:
-        print("error kg encoder format, please choose from [distmult, analogy, transe, rotate]")
-        sys.exit(0)
-
-    if model_name == 'proto_meta':
-        batch_size = 1
-        cal_meta_rel = True
-        return_cnpt_id = True
-        keep_grad = True
-
-    #if opt.gpu and torch.cuda.is_available():
-    #    torch.cuda.set_device(opt.gpu)
     
     print("{}-way-{}-shot Few-Shot Relation Classification".format(N, K))
     print("model: {}".format(model_name))
-    print("val dataset: {}".format(opt.val))
+    print("encoder: {}".format(encoder_name))
     print("max_length: {}".format(max_length))
-    print("hidden dim: {}".format(opt.hidden_size))
-    print("feature dim: {}".format(opt.feature_dim))
-    print("kg_dir: {}".format(opt.kg_dict))
-    print("kg_dim: {}".format(str(kg_emb_dim)))
-    #print("use_ernie: {}".format(str(opt.use_ernie)))
-
-    prefix = '-'.join([model_name, opt.train, opt.val, str(N), str(K)])
-    prefix = prefix + "-lambda_para-" + str(opt.lambda_para) + "-beta-" + str(opt.beta)
-
-    if opt.kg_dict is not None:
-       prefix = prefix + '-' + opt.kg_encoder
-       ent_desc = opt.kg_dict + "/desc_feature/umls_wiki_id2fea.txt"
-       ent2id_file = opt.kg_dict + "/desc_feature/umls_wiki_cui2id.txt"
-
-    else:
-       ent_desc = None
-       ent2id_file = None
-
-    if opt.cnpt_att:
-       prefix += '-cnpt_att'
-
-    ckpt = 'checkpoint/{}.pth.tar'.format(prefix)
-    print("save_ckpt_path: {}".format(ckpt))
-
-    if opt.kg_dict is not None:
-        kg_enrich = fewshot_re_kit.kg_enrichment.KG_Enrichment(kg_dict=opt.kg_dict, kg_dim=kg_emb_dim, kg_encoder=kg_encoder)
-        print("load kg_enrich done")
+    print("SEED: ",opt.random_seed)
     
-
-    pretrain_ckpt = opt.pretrain_ckpt # or 'bert-base-uncased'
-
-    if return_cnpt_id:
-        sentence_encoder = BERTSentenceEncoder_cnpt_id(
-                pretrain_ckpt,
-                max_length,
-                kg_enrich=kg_enrich,
-                kg_emb_dim=kg_emb_dim)
-    elif kg_enrich is not None:
-        sentence_encoder = BERTSentenceEncoder_EntDesc(
-                pretrain_ckpt,
-                max_length,
-                ent_desc,
-                ent2id_path=ent2id_file,
-                kg_enrich=kg_enrich,
-                kg_emb_dim=kg_emb_dim,
-                add_cnpt_node=opt.add_cnpt_node)
-    else:
-        sentence_encoder = BERTSentenceEncoder(
-                pretrain_ckpt,
+    if encoder_name == 'cnn':
+        try:
+            glove_mat = np.load('../pretrain/glove/glove_mat.npy')
+            glove_word2id = json.load(open('../pretrain/glove/glove_word2id.json'))
+        except:
+            raise Exception("Cannot find glove files. Run glove/download_glove.sh to download glove files.")
+        sentence_encoder = CNNSentenceEncoder(
+                glove_mat,
+                glove_word2id,
                 max_length)
-    
+    elif encoder_name == 'bert':
+        pretrain_ckpt = opt.pretrain_ckpt or 'bert-base-uncased'
+        if opt.pair:
+            sentence_encoder = BERTPAIRSentenceEncoder(
+                    pretrain_ckpt,
+                    max_length)
+        else:
+            sentence_encoder = BERTSentenceEncoder(
+                    pretrain_ckpt,
+                    max_length,
+                    cat_entity_rep=opt.cat_entity_rep,
+                    mask_entity=opt.mask_entity)
+    elif encoder_name == 'roberta':
+        pretrain_ckpt = opt.pretrain_ckpt or 'roberta-base'
+        if opt.pair:
+            sentence_encoder = RobertaPAIRSentenceEncoder(
+                    pretrain_ckpt,
+                    max_length)
+        else:
+            sentence_encoder = RobertaSentenceEncoder(
+                    pretrain_ckpt,
+                    max_length,
+                    cat_entity_rep=opt.cat_entity_rep)
+    else:
+        raise NotImplementedError
 
-    train_data_loader = get_loader(opt.train, sentence_encoder,
-            N=trainN, K=K, Q=Q, batch_size=batch_size, kg_enhance=kg_enrich, use_ernie=False)
-    val_data_loader = get_loader(opt.val, sentence_encoder,
-            N=N, K=K, Q=Q, batch_size=batch_size, kg_enhance=kg_enrich, use_ernie=False)
-    test_data_loader = get_loader(opt.test, sentence_encoder,
-            N=N, K=K, Q=Q, batch_size=batch_size, kg_enhance=kg_enrich, use_ernie=False)
-
+    Signle = False
+    if opt.pair:
+        train_data_loader = get_loader_pair(opt.train, sentence_encoder,
+                N=trainN, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size, encoder_name=encoder_name)
+        val_data_loader = get_loader_pair(opt.val, sentence_encoder,
+                N=N, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size, encoder_name=encoder_name)
+        test_data_loader = get_loader_pair(opt.test, sentence_encoder,
+                N=N, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size, encoder_name=encoder_name)
+    else:
+        train_data_loader = get_loader(opt.train, sentence_encoder,
+                N=trainN, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size, single=Signle) #######
+        val_data_loader = get_loader(opt.val, sentence_encoder,
+                N=N, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size,single=Signle)#######
+        test_data_loader = get_loader(opt.test, sentence_encoder,
+                N=N, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size,single=Signle)###########
+        if opt.adv:
+            adv_data_loader = get_loader_unsupervised(opt.adv, sentence_encoder,
+                N=trainN, K=K, Q=Q, na_rate=opt.na_rate, batch_size=batch_size) ####################
    
     if opt.optim == 'sgd':
         pytorch_optim = optim.SGD
@@ -205,15 +180,26 @@ def main():
         pytorch_optim = AdamW
     else:
         raise NotImplementedError
+    if opt.adv:
+        framework = FewShotREFramework(train_data_loader, val_data_loader, test_data_loader, adv_data_loader, adv=opt.adv)
+    else:
+        framework = FewShotREFramework(train_data_loader, val_data_loader, test_data_loader)
+        
+    prefix = '-'.join([model_name, encoder_name, opt.train, opt.val, str(N), str(K)])
+    if opt.adv is not None:
+        prefix += '-adv_' + opt.adv
+    if opt.na_rate != 0:
+        prefix += '-na{}'.format(opt.na_rate)
+    if opt.dot:
+        prefix += '-dot'
+    if opt.cat_entity_rep:
+        prefix += '-catentity'
+    if len(opt.ckpt_name) > 0:
+        prefix += '-' + opt.ckpt_name
     
-    framework = FewShotREFramework(train_data_loader, val_data_loader, test_data_loader, cal_meta_rel=cal_meta_rel, keep_grad=keep_grad)
-
     if model_name == 'proto':
-        model = Proto(sentence_encoder, hidden_size=opt.hidden_size, dropout=opt.dropout, feature_size=opt.feature_dim)
-    elif model_name == 'my_proto':
-        model = MyProto(sentence_encoder, dropout=opt.dropout,  word_embedding_dim=opt.word_embedding_dim, feature_size=opt.feature_dim, hidden_size=opt.hidden_size, add_cnpt_node=opt.add_cnpt_node, kg_enrich=kg_enrich, kg_dim=kg_emb_dim)
-    elif model_name == 'proto_meta':
-        model = ProtoMeta(sentence_encoder, N, K, dropout=opt.dropout,  word_embedding_dim=opt.word_embedding_dim, feature_size=opt.feature_dim, hidden_size=opt.hidden_size, kg_dim=kg_emb_dim, kg_enrich=kg_enrich, beta=opt.beta, cnpt_att=cnpt_att)
+        model = Proto(sentence_encoder, dot=opt.dot)
+
     else:
         raise NotImplementedError
     
@@ -227,18 +213,28 @@ def main():
         model.cuda()
 
     if not opt.only_test:
+        if encoder_name in ['bert', 'roberta']:
+            bert_optim = True
+        else:
+            bert_optim = False
+        
+        opt.train_iter = opt.train_iter * opt.grad_iter
         framework.train(model, prefix, batch_size, trainN, N, K, Q,
                 pytorch_optim=pytorch_optim, load_ckpt=opt.load_ckpt, save_ckpt=ckpt,
-                val_step=opt.val_step, fp16=opt.fp16, 
-                train_iter=opt.train_iter, val_iter=opt.val_iter, bert_optim=bert_optim)
+                na_rate=opt.na_rate, val_step=opt.val_step, fp16=opt.fp16, pair=opt.pair, 
+                train_iter=opt.train_iter, val_iter=opt.val_iter, bert_optim=bert_optim, 
+                learning_rate=opt.lr, use_sgd_for_bert=opt.use_sgd_for_bert, grad_iter=opt.grad_iter)
     else:
         ckpt = opt.load_ckpt
         if ckpt is None:
             print("Warning: --load_ckpt is not specified. Will load Hugginface pre-trained checkpoint.")
             ckpt = 'none'
 
-    acc = framework.eval(model, batch_size, N, K, Q, opt.test_iter, ckpt=ckpt)
+    acc = framework.eval(model, batch_size, N, K, Q, opt.test_iter, na_rate=opt.na_rate, ckpt=ckpt, pair=opt.pair)
     print("RESULT: %.2f" % (acc * 100))
+    f=open("seed-result.txt",'a')
+    f.writelines("Seed: "+str(opt.random_seed)+ "  Result:"+str(acc * 100)+"\n")
+    f.close()
 
 if __name__ == "__main__":
     main()
