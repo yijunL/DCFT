@@ -63,7 +63,7 @@ print(openai.api_base)
 
 records = {}
 try:
-    records = json.load(open("records-5-5.json",'r'))
+    records = json.load(open("records-5-1.json",'r'))
 except Exception as e:
     print("error:", e)
     
