@@ -14,6 +14,7 @@ import argparse
 import random
 from utils import set_seed
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', default='train_wiki',
@@ -36,7 +37,7 @@ def main():
             help='batch size')
     parser.add_argument('--train_iter', default=5000, type=int,
             help='num of iters in training')
-    parser.add_argument('--val_iter', default=1000, type=int,
+    parser.add_argument('--val_iter', default=2000, type=int,
             help='num of iters in validation')
     parser.add_argument('--test_iter', default=10000, type=int,
             help='num of iters in testing')
