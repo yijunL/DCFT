@@ -1,6 +1,6 @@
 # DCFT: Domain-Aware and Co-Adaptive Feature Transformation for Domain Adaptation Few-Shot Relation Extraction
 
-This repository contains the dataset and code implementation for the paper ​**"Domain-aware and Co-adaptive Feature Transformation for Domain Adaption Few-shot Relation Extraction"** (accepted at LREC-COLING 2024). The project addresses cross-domain few-shot relation extraction through feature space adaptation.
+This repository contains the dataset and code implementation for the paper ​"Domain-aware and Co-adaptive Feature Transformation for Domain Adaption Few-shot Relation Extraction" (accepted at LREC-COLING 2024). The project addresses cross-domain few-shot relation extraction through feature space adaptation.
 
 ## Installation
 ```bash
